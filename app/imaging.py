@@ -9,6 +9,8 @@ import numpy as np
 import pandas as pd
 import tifffile
 
+import colormaps
+
 # Leading identifier before any unit suffix, e.g. "x [nm]" -> "x", "x_AST [nm]" -> "x_ast".
 _COLUMN_TOKEN_RE = re.compile(r"^\s*([A-Za-z_]+)")
 
@@ -63,19 +65,17 @@ def load_localizations(path):
 
 def colorize_by_depth(z, cmap="turbo", alpha=0.7):
     """Map a z array to RGBA colors (0..1 floats) for depth-coded point coloring."""
-    import matplotlib
-
     zmin, zmax = z.min(), z.max()
     span = zmax - zmin if zmax > zmin else 1.0
-    colors = matplotlib.colormaps[cmap]((z - zmin) / span)
+    rgb = colormaps.sample(cmap, (z - zmin) / span)
+    colors = np.empty((len(rgb), 4), dtype=np.float64)
+    colors[:, :3] = rgb
     colors[:, 3] = alpha
     return colors
 
 
 def colormap_css_gradient(cmap, n_stops=12):
-    """CSS linear-gradient string for a matplotlib colormap, low value at 0% and high at 100%."""
-    import matplotlib
-
-    colors = matplotlib.colormaps[cmap](np.linspace(0, 1, n_stops))
-    stops = [f"rgb({round(r * 255)},{round(g * 255)},{round(b * 255)})" for r, g, b, _a in colors]
+    """CSS linear-gradient string for a colormap, low value at 0% and high at 100%."""
+    rgb = colormaps.sample(cmap, np.linspace(0, 1, n_stops))
+    stops = [f"rgb({round(r * 255)},{round(g * 255)},{round(b * 255)})" for r, g, b in rgb]
     return "linear-gradient(to top, " + ", ".join(stops) + ")"

@@ -35,31 +35,21 @@ FAVICON_SVG = (
     "%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
 )
 
-# A dark, glassmorphic theme (deep charcoal base, gold->cyan accent gradient,
-# self-hosted Inter) layered on Shiny's modern "shiny" preset rather than
-# plain Bootstrap, since it starts from softer corners/shadows already.
-theme = (
-    ui.Theme("shiny")
-    .add_defaults(
-        body_bg="#05060a",
-        body_color="#eef0f4",
-        primary="#F0C808",
-        secondary="#22d3ee",
-        border_radius="0.85rem",
-        font_family_base="'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
-        input_bg="rgba(255,255,255,0.05)",
-        input_color="#eef0f4",
-        input_border_color="rgba(255,255,255,0.14)",
-    )
-)
+# Deliberately an unmodified preset: shiny.ui.Theme only shells out to libsass
+# when the theme has customizations, and libsass is a C extension that cannot be
+# installed in Pyodide. An untouched preset loads Shiny's precompiled CSS, so
+# this app needs no Sass toolchain at all (and no `shiny[theme]` extra).
+# The dark, glassmorphic look is carried entirely by the stylesheet below, which
+# also ports over the handful of Bootstrap variables the old .add_defaults() set.
+theme = ui.Theme("shiny")
 
 app_ui = ui.page_fluid(
     ui.tags.link(rel="icon", href=FAVICON_SVG),
     ui.tags.style("""
-        @font-face { font-family:'Inter'; font-weight:400; font-style:normal; font-display:swap; src:url('/fonts/inter-400.woff2') format('woff2'); }
-        @font-face { font-family:'Inter'; font-weight:500; font-style:normal; font-display:swap; src:url('/fonts/inter-500.woff2') format('woff2'); }
-        @font-face { font-family:'Inter'; font-weight:600; font-style:normal; font-display:swap; src:url('/fonts/inter-600.woff2') format('woff2'); }
-        @font-face { font-family:'Inter'; font-weight:700; font-style:normal; font-display:swap; src:url('/fonts/inter-700.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:400; font-style:normal; font-display:swap; src:url('fonts/inter-400.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:500; font-style:normal; font-display:swap; src:url('fonts/inter-500.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:600; font-style:normal; font-display:swap; src:url('fonts/inter-600.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:700; font-style:normal; font-display:swap; src:url('fonts/inter-700.woff2') format('woff2'); }
 
         :root {
             --accent-1: #F0C808;
@@ -69,6 +59,18 @@ app_ui = ui.page_fluid(
             --border-subtle: rgba(255, 255, 255, 0.09);
             --text-primary: #eef0f4;
             --text-muted: #9aa1b1;
+
+            /* Ported from the old .add_defaults(): Bootstrap reads these at
+               runtime, so they no longer need a Sass compile to take effect. */
+            --bs-primary: #F0C808;
+            --bs-primary-rgb: 240, 200, 8;
+            --bs-secondary: #22d3ee;
+            --bs-body-bg: #05060a;
+            --bs-body-color: #eef0f4;
+            --bs-border-radius: 0.85rem;
+            --bs-body-font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+            /* Renders native widgets (select popups, scrollbars) dark. */
+            color-scheme: dark;
         }
 
         html, body {
@@ -138,12 +140,21 @@ app_ui = ui.page_fluid(
         }
         .slider-stack, .scalebar-stack { display: flex; flex-direction: column; gap: 6px; }
 
-        /* ui.input_switch already renders Bootstrap's real switch component,
-           which picks up our theme's primary/border-radius automatically -
-           just align its spacing with the rest of the topbar. */
+        /* ui.input_switch renders Bootstrap's real switch component; these
+           rules align its spacing with the rest of the topbar. */
         .topbar .form-check.form-switch { margin: 0; display: flex; align-items: center; gap: 9px; padding-left: 0; }
         .topbar .form-check.form-switch .form-check-input { margin: 0; flex: 0 0 auto; cursor: pointer; }
         .topbar .form-check-label { cursor: pointer; }
+        /* Bootstrap compiles the checked colour in as a literal, not a var(), so
+           the --bs-primary override above cannot reach it. */
+        .topbar .form-check-input:checked {
+            background-color: var(--accent-1) !important;
+            border-color: var(--accent-1) !important;
+        }
+        .topbar .form-check-input:focus {
+            border-color: var(--accent-1);
+            box-shadow: 0 0 0 0.2rem rgba(var(--accent-1-rgb), 0.25);
+        }
 
         .irs--shiny { font-size: 1em !important; }
         .irs--shiny .irs-line { background: rgba(255, 255, 255, 0.08); border-radius: 6px; }
@@ -158,7 +169,7 @@ app_ui = ui.page_fluid(
         #status { color: var(--text-muted); white-space: pre-line; font-size: 0.92em; }
     """),
     ui.tags.script(
-        ui.HTML('{"imports": {"three": "/vendor/three.module.js"}}'),
+        ui.HTML('{"imports": {"three": "./vendor/three.module.min.js"}}'),
         type="importmap",
     ),
     ui.div(

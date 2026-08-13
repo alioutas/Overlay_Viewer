@@ -1,5 +1,5 @@
 import * as THREE from "three";
-import { OrbitControls } from "/vendor/OrbitControls.js";
+import { OrbitControls } from "./vendor/OrbitControls.js";
 
 const container = document.getElementById("viewer-canvas");
 
@@ -47,7 +47,7 @@ let pointCloud = null;
 // samples alpha=0 for a never-loaded texture).
 let sphereSpriteTexture = null;
 new THREE.TextureLoader().load(
-    "/sphere.png",
+    "sphere.png",
     (tex) => {
         sphereSpriteTexture = tex;
         if (pointCloud) {
@@ -56,7 +56,7 @@ new THREE.TextureLoader().load(
         }
     },
     undefined,
-    () => console.warn("viewer.js: /sphere.png failed to load; point cloud will render as plain dots"),
+    () => console.warn("viewer.js: sphere.png failed to load; point cloud will render as plain dots"),
 );
 
 // Persists across scene reloads so a re-uploaded file or pixel-size tweak
