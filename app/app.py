@@ -28,6 +28,18 @@ FLAT_COLORS = {
 }
 FLAT_COLOR_CHOICES = {name: name.capitalize() for name in FLAT_COLORS}
 
+# Largest value the "Sphere size" slider allows.
+MAX_POINT_SIZE = 20.0
+# How far below the lowest localization the image plane is placed, in world
+# units (= image pixels, since positions are divided by the pixel size).
+# Three.js point size is a world-space diameter, so half the maximum diameter is
+# exactly the radius of the biggest sphere the user can dial in - any less and
+# the plane slices through them. Deliberately keyed to the slider's maximum
+# rather than its current value: making the plane depend on the live size would
+# force a full scene rebuild on every drag of the size slider, which is exactly
+# what the lightweight point_size_update path exists to avoid.
+IMAGE_CLEARANCE_PX = MAX_POINT_SIZE / 2
+
 FAVICON_SVG = (
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
     "%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E"
@@ -185,7 +197,7 @@ app_ui = ui.page_fluid(
             ui.input_numeric("pixel_size", "Pixel size (nm/px)", value=97, min=0.1, step=0.1, width="150px"),
             ui.input_select("colormap", "Color", choices=FLAT_COLOR_CHOICES, selected="magenta", width="140px"),
             ui.div(
-                ui.input_slider("point_size", "Sphere size", min=1, max=20, value=5, step=0.5, width="150px"),
+                ui.input_slider("point_size", "Sphere size", min=1, max=MAX_POINT_SIZE, value=5, step=0.5, width="150px"),
                 ui.input_slider("point_opacity", "Opacity", min=0.1, max=1, value=0.9, step=0.1, width="150px"),
                 class_="slider-stack",
             ),
@@ -293,7 +305,8 @@ def server(input, output, session):
             color_choice = input.colormap()
 
         msg = {"image": None, "points": None}
-        image_z_px = 0.0
+        # 2D data sits at z = 0, so the plane drops by the full clearance.
+        image_z_px = -IMAGE_CLEARANCE_PX
 
         if df is not None and len(df):
             x_px = df["x"].to_numpy() / pixel_size
@@ -301,9 +314,7 @@ def server(input, output, session):
             z_px = df["z"].to_numpy() / pixel_size if is_3d else np.zeros(len(df))
             colors = _compute_point_colors(df, is_3d, color_choice)
             if is_3d:
-                # Placed a nanometer below the lowest localization so the whole
-                # point cloud renders above the image rather than through it.
-                image_z_px = (float(df["z"].to_numpy().min()) - 1.0) / pixel_size
+                image_z_px = float(df["z"].to_numpy().min()) / pixel_size - IMAGE_CLEARANCE_PX
             positions = np.column_stack([x_px, y_px, z_px])
             msg["points"] = {
                 "positions_b64": _encode_f32(positions),

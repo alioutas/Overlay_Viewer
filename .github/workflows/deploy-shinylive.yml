@@ -1,0 +1,55 @@
+name: Deploy Shinylive to GitHub Pages
+
+# Builds the static Shinylive site from app/ on every push to this branch.
+# The 44 MB build output is never committed - it is produced here and handed
+# straight to Pages as an artifact.
+
+on:
+  push:
+    branches: [shinylive]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+# Never let two deploys race; queue them instead.
+concurrency:
+  group: pages
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install shinylive
+        run: pip install shinylive
+
+      - name: Export static site
+        run: shinylive export app _site
+
+      # Stops Pages running the output through Jekyll, which would ignore any
+      # path beginning with an underscore.
+      - name: Disable Jekyll
+        run: touch _site/.nojekyll
+
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
