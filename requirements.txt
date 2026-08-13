@@ -1,0 +1,6 @@
+shiny[theme]
+numpy
+pandas
+pillow
+tifffile
+matplotlib
