@@ -1,3 +1,6 @@
+# Shinylive build output
+_site/
+
 # Editor/tool config
 .claude/
 .vscode/
