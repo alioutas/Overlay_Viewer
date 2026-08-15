@@ -9,6 +9,9 @@ from shiny import App, reactive, render, ui
 import imaging
 
 _WWW_DIR = Path(__file__).parent / "www"
+# Cache-buster: browsers hold onto viewer.js aggressively, so a stale copy
+# silently survives edits. Keying the URL to the file mtime avoids that.
+_VIEWER_JS = f"viewer.js?v={int((_WWW_DIR / 'viewer.js').stat().st_mtime)}"
 
 COLORMAP_CHOICES = {
     "turbo": "Turbo",
@@ -27,6 +30,24 @@ FLAT_COLORS = {
     "yellow": (1.0, 1.0, 0.0),
 }
 FLAT_COLOR_CHOICES = {name: name.capitalize() for name in FLAT_COLORS}
+
+# Largest value the "Sphere size" slider allows.
+MAX_POINT_SIZE = 20.0
+# How far below the lowest localization the image plane is placed, in world
+# units (= image pixels, since positions are divided by the pixel size) - NOT
+# nanometres; at 97 nm/px this is ~485 nm.
+#
+# Three.js point size is a world-space diameter, so this clears the radius of a
+# size-10 sphere. Tuned by eye rather than to the slider maximum: full clearance
+# for the largest sphere (10) held the plane far enough back that it read as a
+# separate floating layer when the view was tilted. The trade-off is that sphere
+# sizes above 10 will begin to intersect the plane again; the default size is 5.
+#
+# Deliberately a constant rather than a function of the live sphere size: making
+# the plane depend on the current size would force a full scene rebuild on every
+# drag of the size slider, which is what the lightweight point_size_update path
+# exists to avoid.
+IMAGE_CLEARANCE_PX = 5.0
 
 FAVICON_SVG = (
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
@@ -60,20 +81,28 @@ app_ui = ui.page_fluid(
         @font-face { font-family:'Inter'; font-weight:500; font-style:normal; font-display:swap; src:url('/fonts/inter-500.woff2') format('woff2'); }
         @font-face { font-family:'Inter'; font-weight:600; font-style:normal; font-display:swap; src:url('/fonts/inter-600.woff2') format('woff2'); }
         @font-face { font-family:'Inter'; font-weight:700; font-style:normal; font-display:swap; src:url('/fonts/inter-700.woff2') format('woff2'); }
+        @font-face { font-family:'JetBrains Mono'; font-weight:400; font-style:normal; font-display:swap; src:url('/fonts/jetbrains-mono-400.woff2') format('woff2'); }
+        @font-face { font-family:'JetBrains Mono'; font-weight:500; font-style:normal; font-display:swap; src:url('/fonts/jetbrains-mono-500.woff2') format('woff2'); }
 
         :root {
             --accent-1: #F0C808;
             --accent-1-rgb: 240, 200, 8;
-            --accent-2: #22d3ee;
-            --surface-glass: rgba(18, 20, 28, 0.55);
-            --border-subtle: rgba(255, 255, 255, 0.09);
-            --text-primary: #eef0f4;
-            --text-muted: #9aa1b1;
+            --accent-2: #7bd1a8;
+            --panel-bg: rgba(20, 21, 24, 0.86);
+            --panel-border: rgba(255, 255, 255, 0.08);
+            --hairline: rgba(255, 255, 255, 0.07);
+            --text-primary: rgba(255, 255, 255, 0.94);
+            --text-label: rgba(255, 255, 255, 0.72);
+            --text-muted: rgba(255, 255, 255, 0.42);
+            --text-section: rgba(255, 255, 255, 0.38);
+            --field-bg: rgba(255, 255, 255, 0.04);
+            --field-border: rgba(255, 255, 255, 0.10);
+            --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
         }
 
         html, body {
             height: 100%; margin: 0; padding: 0; overflow: hidden;
-            background: #05060a;
+            background: #0b0c0e;
             font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
             color: var(--text-primary);
         }
@@ -81,123 +110,253 @@ app_ui = ui.page_fluid(
         #viewer-canvas { position: absolute; inset: 0; }
         #viewer-canvas canvas { display: block; }
 
-        .topbar {
-            position: fixed; top: 16px; left: 16px; right: 16px; z-index: 10;
-            display: flex; align-items: center; gap: 22px; flex-wrap: wrap;
-            padding: 12px 22px;
-            background: var(--surface-glass);
-            backdrop-filter: blur(18px) saturate(160%);
-            -webkit-backdrop-filter: blur(18px) saturate(160%);
-            border: 1px solid var(--border-subtle);
-            border-radius: 18px;
-            box-shadow:
-                0 12px 40px rgba(0, 0, 0, 0.55),
-                inset 0 1px 0 rgba(255, 255, 255, 0.05),
-                0 -1px 24px rgba(var(--accent-1-rgb), 0.10),
-                0 4px 30px rgba(34, 211, 238, 0.08);
+        /* ---------- side panel ---------- */
+        .sidepanel {
+            position: fixed; top: 20px; left: 20px; bottom: 20px; width: 308px; z-index: 10;
+            display: flex; flex-direction: column;
+            background: var(--panel-bg);
+            backdrop-filter: blur(20px) saturate(1.1);
+            -webkit-backdrop-filter: blur(20px) saturate(1.1);
+            border: 1px solid var(--panel-border);
+            border-radius: 16px;
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.45);
+            overflow: hidden;
             font-size: 13px;
         }
+        body.panel-collapsed .sidepanel { display: none; }
 
-        .brand-block { display: flex; flex-direction: column; gap: 4px; }
-        .brand { display: flex; align-items: center; gap: 8px; font-weight: 600; font-size: 1.08em; letter-spacing: 0.2px; }
-        .brand-mark { width: 20px; height: 20px; border-radius: 6px; flex: 0 0 auto;
-            background: linear-gradient(135deg, var(--accent-1), var(--accent-2)); }
-        .brand-divider { width: 1px; align-self: stretch; background: var(--border-subtle); margin: -12px 0; }
+        .rail-btn {
+            position: fixed; top: 20px; left: 20px; z-index: 11;
+            width: 44px; height: 44px; border-radius: 11px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(22, 23, 26, 0.82);
+            backdrop-filter: blur(14px); -webkit-backdrop-filter: blur(14px);
+            display: none; align-items: center; justify-content: center; cursor: pointer;
+            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.35);
+        }
+        body.panel-collapsed .rail-btn { display: flex; }
+        .rail-btn > span {
+            width: 16px; height: 16px; border-radius: 5px;
+            background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+        }
 
-        .topbar-controls { display: flex; align-items: center; gap: 22px; flex-wrap: wrap; }
-        .topbar-actions { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-left: auto; flex: 0 0 auto; }
-
-        .topbar-btn {
-            background: rgba(255, 255, 255, 0.06);
-            border: 1px solid var(--border-subtle);
-            color: var(--text-primary);
-            border-radius: 8px;
-            min-width: 2.3em; height: 2.3em; padding: 0 0.6em;
+        .panel-header {
+            display: flex; align-items: flex-start; gap: 11px;
+            padding: 18px 16px 16px; border-bottom: 1px solid var(--hairline);
+        }
+        .brand-mark {
+            width: 26px; height: 26px; border-radius: 8px; flex: none; margin-top: 1px;
+            background: linear-gradient(135deg, var(--accent-1), var(--accent-2));
+        }
+        .brand-text { flex: 1; min-width: 0; }
+        .brand-title { font-weight: 600; font-size: 1.115em; color: var(--text-primary); }
+        #status {
+            margin-top: 4px; font-family: var(--mono); font-weight: 400;
+            font-size: 0.885em; line-height: 1.5; color: var(--text-muted);
+            white-space: pre-line;
+        }
+        .icon-btn {
+            flex: none; width: 26px; height: 26px; border-radius: 7px;
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: rgba(255, 255, 255, 0.04);
+            color: rgba(255, 255, 255, 0.6);
+            cursor: pointer; font: 14px system-ui; line-height: 1;
             display: flex; align-items: center; justify-content: center;
-            font-family: inherit; font-size: 1em; font-weight: 600;
-            cursor: pointer; transition: background 0.15s ease, transform 0.15s ease;
         }
-        .topbar-btn:hover { background: rgba(255, 255, 255, 0.13); }
-        .topbar-btn:active { transform: scale(0.92); }
+        .icon-btn:hover { background: rgba(255, 255, 255, 0.1); }
 
-        .topbar .shiny-input-container { margin-bottom: 0; }
-        .topbar label { color: var(--text-muted); margin-bottom: 3px; font-weight: 500; font-size: 0.92em; letter-spacing: 0.2px; }
-
-        .topbar .form-control, .topbar select.form-select {
-            background: rgba(255, 255, 255, 0.05) !important;
-            border: 1px solid var(--border-subtle) !important;
-            color: var(--text-primary) !important;
-            border-radius: 10px !important;
-            font-size: 1em !important;
+        .panel-body {
+            flex: 1; overflow-y: auto; padding: 16px;
+            display: flex; flex-direction: column; gap: 20px;
         }
-        .topbar .input-group-text, .topbar .btn-default, .topbar .btn-secondary, .topbar .btn-file {
+        .panel-body::-webkit-scrollbar { width: 8px; }
+        .panel-body::-webkit-scrollbar-thumb { background: rgba(255,255,255,.12); border-radius: 4px; }
+
+        .panel-section { display: flex; flex-direction: column; gap: 11px; }
+        .section-title {
+            font-weight: 600; font-size: 0.808em; letter-spacing: 0.08em;
+            text-transform: uppercase; color: var(--text-section);
+        }
+        .section-head { display: flex; align-items: center; justify-content: space-between; }
+        .hairline { height: 1px; background: var(--hairline); }
+        .field-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+
+        /* View buttons (XY / + / -) grouped in the Display header */
+        .view-btns {
+            display: flex; gap: 1px; border-radius: 8px; overflow: hidden;
+            border: 1px solid rgba(255, 255, 255, 0.1); background: rgba(255, 255, 255, 0.1);
+        }
+        .view-btns button {
+            height: 26px; border: none; background: rgba(255, 255, 255, 0.04);
+            color: rgba(255, 255, 255, 0.72); cursor: pointer; padding: 0 8px;
+        }
+        .view-btns button:hover { background: rgba(255, 255, 255, 0.12); }
+        #btn-reset-view { font-family: var(--mono); font-weight: 600; font-size: 0.77em; letter-spacing: 0.02em; }
+        #btn-font-inc, #btn-font-dec { font: 500 14px system-ui; min-width: 26px; }
+
+        /* ---------- Shiny input restyling ---------- */
+        .sidepanel .shiny-input-container { margin-bottom: 0; width: 100% !important; }
+        .sidepanel label, .sidepanel .control-label {
+            font-weight: 500; font-size: 0.923em; color: var(--text-label); margin-bottom: 6px;
+        }
+        .sidepanel .form-control, .sidepanel select.form-select {
+            height: 36px; border-radius: 9px;
+            background: var(--field-bg) !important;
+            border: 1px solid var(--field-border) !important;
+            color: rgba(255, 255, 255, 0.9) !important;
+            font-family: var(--mono); font-weight: 500; font-size: 0.96em !important;
+            padding: 0 10px;
+        }
+        .sidepanel select.form-select { font-family: 'Inter', sans-serif; }
+        .sidepanel .form-control:focus, .sidepanel select.form-select:focus {
+            border-color: rgba(var(--accent-1-rgb), 0.5) !important;
+            box-shadow: 0 0 0 3px rgba(var(--accent-1-rgb), 0.15) !important;
+        }
+
+        /* File inputs: collapse Shiny's button+textbox group into one dashed field */
+        .sidepanel .input-group {
+            border: 1px dashed rgba(255, 255, 255, 0.18); border-radius: 9px;
+            background: rgba(255, 255, 255, 0.03); overflow: hidden; height: 38px; flex-wrap: nowrap;
+        }
+        .sidepanel .input-group .btn-file {
+            background: transparent !important; border: none !important;
+            color: rgba(255, 255, 255, 0.55) !important;
+            font-weight: 500; font-size: 0.96em; padding: 0 12px; height: 36px;
+            display: flex; align-items: center;
+        }
+        .sidepanel .input-group .form-control {
+            border: none !important; background: transparent !important; height: 36px;
+            font-family: 'Inter', sans-serif; font-size: 0.9em;
+            color: rgba(255, 255, 255, 0.75) !important; padding-left: 0; min-width: 0;
+        }
+        .sidepanel .input-group .form-control:focus { box-shadow: none !important; }
+        .sidepanel .progress { display: none; }
+
+        /* Toggles */
+        .sidepanel .form-check.form-switch {
+            margin: 0; padding: 0; display: flex; align-items: center;
+            justify-content: space-between; width: 100%;
+        }
+        .sidepanel .form-check.form-switch .form-check-input {
+            margin: 0; flex: none; width: 36px; height: 20px; cursor: pointer;
+            background-color: rgba(255, 255, 255, 0.14); border-color: transparent;
+        }
+        .sidepanel .form-check-input:checked {
+            background-color: var(--accent-1) !important; border-color: var(--accent-1) !important;
+        }
+        .sidepanel .form-check-input:focus {
+            border-color: transparent; box-shadow: 0 0 0 3px rgba(var(--accent-1-rgb), 0.2);
+        }
+        .sidepanel .form-check-label { order: -1; margin: 0; cursor: pointer; }
+
+        /* Sliders */
+        .sidepanel .irs--shiny { font-size: 1em !important; }
+        .sidepanel .irs--shiny .irs-line { background: rgba(255, 255, 255, 0.14); border-radius: 2px; top: 27px; height: 4px; }
+        .sidepanel .irs--shiny .irs-bar { background: var(--accent-1) !important; top: 27px; height: 4px; }
+        .sidepanel .irs--shiny .irs-handle {
+            width: 16px; height: 16px; top: 21px; border: 2px solid #17181b; background: var(--accent-1);
+            box-shadow: 0 1px 3px rgba(0, 0, 0, 0.4);
+        }
+        .sidepanel .irs--shiny .irs-single {
+            background: var(--accent-1) !important; color: #0b0c0e !important;
+            font-family: var(--mono); font-weight: 600; font-size: 0.92em;
+            border-radius: 6px; padding: 2px 8px;
+        }
+        .sidepanel .irs--shiny .irs-single:before { display: none; }
+        .sidepanel .irs--shiny .irs-min, .sidepanel .irs--shiny .irs-max {
+            background: transparent; color: rgba(255, 255, 255, 0.32);
+            font-family: var(--mono); font-size: 0.807em; visibility: visible !important;
+        }
+
+        /* Buttons */
+        .sidepanel .btn-default, .sidepanel .btn-secondary, .sidepanel .action-button {
             background: rgba(255, 255, 255, 0.06) !important;
-            border: 1px solid var(--border-subtle) !important;
-            color: var(--text-primary) !important;
-            border-radius: 10px !important;
+            border: 1px solid var(--field-border) !important;
+            color: var(--text-label) !important;
+            border-radius: 8px !important; font-size: 0.9em; white-space: nowrap;
         }
-        .slider-stack, .scalebar-stack { display: flex; flex-direction: column; gap: 6px; }
+        .sidepanel .action-button:hover { background: rgba(255, 255, 255, 0.12) !important; }
 
-        /* ui.input_switch already renders Bootstrap's real switch component,
-           which picks up our theme's primary/border-radius automatically -
-           just align its spacing with the rest of the topbar. */
-        .topbar .form-check.form-switch { margin: 0; display: flex; align-items: center; gap: 9px; padding-left: 0; }
-        .topbar .form-check.form-switch .form-check-input { margin: 0; flex: 0 0 auto; cursor: pointer; }
-        .topbar .form-check-label { cursor: pointer; }
-
-        .irs--shiny { font-size: 1em !important; }
-        .irs--shiny .irs-line { background: rgba(255, 255, 255, 0.08); border-radius: 6px; }
-        .irs--shiny .irs-bar { background: linear-gradient(90deg, var(--accent-1), var(--accent-2)) !important; }
-        .irs--shiny .irs-single, .irs--shiny .irs-from, .irs--shiny .irs-to {
-            background: var(--accent-1) !important;
-            color: #14110a !important; /* dark text for legibility on the bright gold badge */
-        }
-        .irs--shiny .irs-handle { box-shadow: 0 0 0 3px rgba(var(--accent-1-rgb), 0.35), 0 2px 6px rgba(0, 0, 0, 0.4); }
-        .irs--shiny .irs-min, .irs--shiny .irs-max { color: var(--text-muted); background: transparent; }
-
-        #status { color: var(--text-muted); white-space: pre-line; font-size: 0.92em; }
+        .align-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
+        .align-grid .shiny-input-container { width: 100% !important; }
+        .align-grid .action-button { grid-column: 1 / -1; }
     """),
     ui.tags.script(
         ui.HTML('{"imports": {"three": "/vendor/three.module.js"}}'),
         type="importmap",
     ),
-    ui.div(
+    ui.tags.button(ui.tags.span(), id="panel-expand", class_="rail-btn",
+                   title="Expand panel", type="button"),
+    ui.tags.aside(
         ui.div(
-            ui.div(ui.div(class_="brand-mark"), "Overlay Viewer", class_="brand"),
-            ui.output_text("status"),
-            class_="brand-block",
-        ),
-        ui.div(class_="brand-divider"),
-        ui.div(
-            ui.input_file("image_file", "Image (.tif)", accept=[".tif", ".tiff"], width="220px"),
-            ui.input_file("loc_file", "Localizations (.csv)", accept=[".csv"], width="220px"),
-            ui.input_numeric("pixel_size", "Pixel size (nm/px)", value=97, min=0.1, step=0.1, width="150px"),
-            ui.input_select("colormap", "Color", choices=FLAT_COLOR_CHOICES, selected="magenta", width="140px"),
+            ui.div(class_="brand-mark"),
             ui.div(
-                ui.input_slider("point_size", "Sphere size", min=1, max=20, value=5, step=0.5, width="150px"),
-                ui.input_slider("point_opacity", "Opacity", min=0.1, max=1, value=0.9, step=0.1, width="150px"),
-                class_="slider-stack",
+                ui.div("Overlay Viewer", class_="brand-title"),
+                ui.output_text("status"),
+                class_="brand-text",
             ),
-            ui.div(
+            ui.tags.button("‹", id="btn-collapse", class_="icon-btn",
+                           title="Collapse panel", type="button"),
+            class_="panel-header",
+        ),
+        ui.div(
+            # --- Data -------------------------------------------------------
+            ui.tags.section(
+                ui.div("Data", class_="section-title"),
+                ui.input_file("image_file", "Image (.tif)", accept=[".tif", ".tiff"]),
+                ui.input_file("loc_file", "Localizations (.csv)", accept=[".csv"]),
+                ui.input_switch("show_image_adjust", "Align image", value=False),
+                ui.panel_conditional(
+                    "input.show_image_adjust",
+                    ui.div(
+                        ui.input_numeric("image_scale", "Scale", value=1, min=0.01, step=0.05),
+                        ui.input_numeric("image_dx", "X (nm)", value=0, step=100),
+                        ui.input_numeric("image_dy", "Y (nm)", value=0, step=100),
+                        ui.input_action_button("fit_image", "Fit to data"),
+                        class_="align-grid",
+                    ),
+                ),
+                class_="panel-section",
+            ),
+            ui.div(class_="hairline"),
+            # --- Display ----------------------------------------------------
+            ui.tags.section(
+                ui.div(
+                    ui.div("Display", class_="section-title"),
+                    ui.div(
+                        ui.tags.button("XY", id="btn-reset-view", title="Reset to XY view", type="button"),
+                        ui.tags.button("+", id="btn-font-inc", title="Increase panel text size", type="button"),
+                        ui.tags.button("−", id="btn-font-dec", title="Decrease panel text size", type="button"),
+                        class_="view-btns",
+                    ),
+                    class_="section-head",
+                ),
+                ui.div(
+                    ui.input_numeric("pixel_size", "Pixel size (nm/px)", value=97, min=0.1, step=0.1),
+                    ui.input_select("colormap", "Color", choices=FLAT_COLOR_CHOICES, selected="magenta"),
+                    class_="field-grid",
+                ),
+                class_="panel-section",
+            ),
+            ui.div(class_="hairline"),
+            # --- Overlay style ----------------------------------------------
+            ui.tags.section(
+                ui.div("Overlay style", class_="section-title"),
+                ui.input_slider("point_size", "Sphere size", min=1, max=MAX_POINT_SIZE, value=5, step=0.5),
+                ui.input_slider("point_opacity", "Opacity", min=0.1, max=1, value=0.9, step=0.1),
                 ui.input_switch("show_scale_bar", "Scale bar", value=False),
                 ui.panel_conditional(
                     "input.show_scale_bar",
-                    ui.input_numeric("scale_bar_um", "Size (µm)", value=5, min=1, step=1, width="100px"),
+                    ui.input_numeric("scale_bar_um", "Size (µm)", value=5, min=1, step=1),
                 ),
-                class_="scalebar-stack",
+                class_="panel-section",
             ),
-            class_="topbar-controls",
+            class_="panel-body",
         ),
-        ui.div(
-            ui.tags.button("XY", id="btn-reset-view", class_="topbar-btn", title="Reset view", type="button"),
-            ui.tags.button("+", id="btn-font-inc", class_="topbar-btn", title="Increase toolbar text size", type="button"),
-            ui.tags.button("−", id="btn-font-dec", class_="topbar-btn", title="Decrease toolbar text size", type="button"),
-            class_="topbar-actions",
-        ),
-        class_="topbar",
+        class_="sidepanel",
     ),
     ui.div(id="viewer-canvas"),
-    ui.tags.script(src="viewer.js", type="module"),
+    ui.tags.script(src=_VIEWER_JS, type="module"),
     title="Overlay Viewer",
     theme=theme,
 )
@@ -262,11 +421,21 @@ def server(input, output, session):
     def status():
         parts = []
         img = image_arr()
+        pixel_size = input.pixel_size() or 97.0
+        scale = input.image_scale() or 1.0
         if img is not None:
-            parts.append(f"image {img.shape[1]}×{img.shape[0]} px")
+            w_um = img.shape[1] * pixel_size * scale / 1000.0
+            h_um = img.shape[0] * pixel_size * scale / 1000.0
+            parts.append(f"image {img.shape[1]}×{img.shape[0]} px = {w_um:.1f}×{h_um:.1f} µm")
         df, is_3d = loc_data()
         if df is not None:
-            parts.append(f"{len(df):,} localizations ({'3D' if is_3d else '2D'})")
+            # Shown next to the image extent so a scale mismatch is obvious:
+            # if these two spans disagree, the overlay cannot line up.
+            dx_um = (df["x"].max() - df["x"].min()) / 1000.0
+            dy_um = (df["y"].max() - df["y"].min()) / 1000.0
+            parts.append(
+                f"{len(df):,} locs ({'3D' if is_3d else '2D'}) span {dx_um:.1f}×{dy_um:.1f} µm"
+            )
         return "\n".join(parts)
 
     @reactive.effect
@@ -282,7 +451,8 @@ def server(input, output, session):
             color_choice = input.colormap()
 
         msg = {"image": None, "points": None}
-        image_z_px = 0.0
+        # 2D data sits at z = 0, so the plane drops by the full clearance.
+        image_z_px = -IMAGE_CLEARANCE_PX
 
         if df is not None and len(df):
             x_px = df["x"].to_numpy() / pixel_size
@@ -290,9 +460,7 @@ def server(input, output, session):
             z_px = df["z"].to_numpy() / pixel_size if is_3d else np.zeros(len(df))
             colors = _compute_point_colors(df, is_3d, color_choice)
             if is_3d:
-                # Placed a nanometer below the lowest localization so the whole
-                # point cloud renders above the image rather than through it.
-                image_z_px = (float(df["z"].to_numpy().min()) - 1.0) / pixel_size
+                image_z_px = float(df["z"].to_numpy().min()) / pixel_size - IMAGE_CLEARANCE_PX
             positions = np.column_stack([x_px, y_px, z_px])
             msg["points"] = {
                 "positions_b64": _encode_f32(positions),
@@ -310,6 +478,36 @@ def server(input, output, session):
             }
 
         await session.send_custom_message("scene_update", msg)
+
+    @reactive.effect
+    async def _push_image_transform():
+        # Independent of _push_scene_update so nudging the image does not rebuild
+        # the geometry or re-upload the texture - it just moves the existing plane.
+        pixel_size = input.pixel_size() or 97.0
+        await session.send_custom_message("image_transform_update", {
+            "scale": input.image_scale() or 1.0,
+            "dx_px": (input.image_dx() or 0.0) / pixel_size,
+            "dy_px": (input.image_dy() or 0.0) / pixel_size,
+        })
+
+    @reactive.effect
+    @reactive.event(input.fit_image)
+    def _fit_image_to_data():
+        """Scale/offset the image so its extent matches the localization bounding box."""
+        img = image_arr()
+        df, _ = loc_data()
+        if img is None or df is None or not len(df):
+            ui.notification_show("Load both an image and localizations first.", type="warning")
+            return
+        pixel_size = input.pixel_size() or 97.0
+        # Image spans width*pixel_size nm at scale 1; pick the scale that makes it
+        # cover the data's larger dimension, so aspect ratio is never distorted.
+        span_x, span_y = float(df["x"].max() - df["x"].min()), float(df["y"].max() - df["y"].min())
+        img_w_nm, img_h_nm = img.shape[1] * pixel_size, img.shape[0] * pixel_size
+        scale = max(span_x / img_w_nm, span_y / img_h_nm)
+        ui.update_numeric("image_scale", value=round(scale, 4))
+        ui.update_numeric("image_dx", value=round(float(df["x"].min()), 1))
+        ui.update_numeric("image_dy", value=round(float(df["y"].min()), 1))
 
     @reactive.effect
     async def _push_point_colors():

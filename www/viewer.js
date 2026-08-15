@@ -64,6 +64,26 @@ new THREE.TextureLoader().load(
 let currentPointSize = 5;
 let currentPointOpacity = 0.9;
 
+// Untransformed image dimensions, kept so the alignment controls can be
+// re-applied from scratch rather than accumulating rounding on each nudge.
+let imageBase = null;
+let imageTransform = { scale: 1, dx_px: 0, dy_px: 0 };
+
+function applyImageTransform() {
+    if (!imagePlane || !imageBase) return;
+    const { width, height, z } = imageBase;
+    const s = imageTransform.scale || 1;
+    imagePlane.scale.set(s, s, 1);
+    // PlaneGeometry is centred on its own origin, so half the *scaled* size puts
+    // image pixel (0,0) at world (0,0); rows then run downward (-Y) to match the
+    // localization convention. The offsets shift from there: +X right, +Y down.
+    imagePlane.position.set(
+        (width * s) / 2 + imageTransform.dx_px,
+        -(height * s) / 2 - imageTransform.dy_px,
+        z,
+    );
+}
+
 const scaleBarEl = document.createElement("div");
 scaleBarEl.style.cssText =
     "display:none; position:absolute; bottom:16px; right:16px; pointer-events:none; " +
@@ -77,8 +97,8 @@ container.appendChild(scaleBarEl);
 
 let scaleBar = { show: false, lengthWorld: 0, label: "" };
 
-// Z-depth color legend, pinned under the topbar (repositioned to track its
-// actual height, since that changes with font size and status text length).
+// Z-depth color legend, pinned to the top-right of the canvas (the control
+// panel is on the left, so the two never collide).
 const legendEl = document.createElement("div");
 legendEl.style.cssText =
     "display:none; position:fixed; right:16px; z-index:9; pointer-events:none; " +
@@ -149,31 +169,33 @@ function resetView() {
     if (haveContent) fitCameraToBounds(box);
 }
 
-const topbarEl = document.querySelector(".topbar");
-let topbarFontSize = 13;
-function applyTopbarFontSize() {
-    if (topbarEl) topbarEl.style.fontSize = topbarFontSize + "px";
-    repositionLegend();
+const panelEl = document.querySelector(".sidepanel");
+let panelFontSize = 13;
+function applyPanelFontSize() {
+    if (panelEl) panelEl.style.fontSize = panelFontSize + "px";
 }
 
+// The legend sits top-right, clear of the left-hand panel, so unlike the old
+// top bar there is nothing to measure against - a fixed offset is enough.
 function repositionLegend() {
-    if (!topbarEl) return;
-    legendEl.style.top = topbarEl.getBoundingClientRect().bottom + 12 + "px";
+    legendEl.style.top = "20px";
 }
-if (topbarEl && typeof ResizeObserver !== "undefined") {
-    new ResizeObserver(repositionLegend).observe(topbarEl);
-}
-window.addEventListener("resize", repositionLegend);
 repositionLegend();
+
+function setPanelCollapsed(collapsed) {
+    document.body.classList.toggle("panel-collapsed", collapsed);
+}
+document.getElementById("btn-collapse")?.addEventListener("click", () => setPanelCollapsed(true));
+document.getElementById("panel-expand")?.addEventListener("click", () => setPanelCollapsed(false));
 
 document.getElementById("btn-reset-view")?.addEventListener("click", resetView);
 document.getElementById("btn-font-inc")?.addEventListener("click", () => {
-    topbarFontSize = Math.min(20, topbarFontSize + 1);
-    applyTopbarFontSize();
+    panelFontSize = Math.min(20, panelFontSize + 1);
+    applyPanelFontSize();
 });
 document.getElementById("btn-font-dec")?.addEventListener("click", () => {
-    topbarFontSize = Math.max(10, topbarFontSize - 1);
-    applyTopbarFontSize();
+    panelFontSize = Math.max(10, panelFontSize - 1);
+    applyPanelFontSize();
 });
 
 function animate() {
@@ -238,11 +260,8 @@ function loadScene(msg) {
         const geo = new THREE.PlaneGeometry(width, height);
         const mat = new THREE.MeshBasicMaterial({ map: tex, side: THREE.DoubleSide });
         imagePlane = new THREE.Mesh(geo, mat);
-        // Plane geometry is centered at origin with +Y up; shift so pixel (0,0)
-        // (top-left) sits at world (0,0) and rows increase downward (-Y), matching
-        // the localization convention (y_nm increasing downward). z is placed
-        // just below the lowest localization so the point cloud renders above it.
-        imagePlane.position.set(width / 2, -height / 2, z || 0);
+        imageBase = { width, height, z: z || 0 };
+        applyImageTransform();
         scene.add(imagePlane);
         box.expandByObject(imagePlane);
         haveContent = true;
@@ -271,7 +290,6 @@ function loadScene(msg) {
     }
 
     if (haveContent) fitCameraToBounds(box);
-    // Status text length (and therefore topbar height) can change with new data.
     repositionLegend();
 }
 
@@ -320,8 +338,18 @@ function applyLegendUpdate(msg) {
     repositionLegend();
 }
 
+function applyImageTransformUpdate(msg) {
+    imageTransform = {
+        scale: typeof msg.scale === "number" ? msg.scale : 1,
+        dx_px: typeof msg.dx_px === "number" ? msg.dx_px : 0,
+        dy_px: typeof msg.dy_px === "number" ? msg.dy_px : 0,
+    };
+    applyImageTransform();
+}
+
 function registerHandlers() {
     Shiny.addCustomMessageHandler("scene_update", loadScene);
+    Shiny.addCustomMessageHandler("image_transform_update", applyImageTransformUpdate);
     Shiny.addCustomMessageHandler("scale_bar_update", applyScaleBarUpdate);
     Shiny.addCustomMessageHandler("point_size_update", applyPointSizeUpdate);
     Shiny.addCustomMessageHandler("point_opacity_update", applyPointOpacityUpdate);
@@ -344,9 +372,11 @@ window.__overlayViewerReady = new Promise((resolve) => {
 // Debug/testing hook only; not used by the app itself.
 window.__overlayViewerDebug = {
     scene, camera, controls, loadScene, applyScaleBarUpdate, applyPointSizeUpdate,
-    applyPointOpacityUpdate, applyPointColorsUpdate, applyLegendUpdate, resetView,
+    applyPointOpacityUpdate, applyPointColorsUpdate, applyLegendUpdate,
+    applyImageTransformUpdate, resetView,
     getScaleBarState: () => scaleBar, getPointSize: () => currentPointSize,
-    getPointOpacity: () => currentPointOpacity, getTopbarFontSize: () => topbarFontSize,
-    updateScaleBar, scaleBarEl, topbarEl, legendEl, legendBar, legendMaxLabel, legendMinLabel,
+    getPointOpacity: () => currentPointOpacity, getPanelFontSize: () => panelFontSize,
+    getImageTransform: () => imageTransform, applyImageTransform,
+    updateScaleBar, scaleBarEl, panelEl, setPanelCollapsed, legendEl, legendBar, legendMaxLabel, legendMinLabel,
     repositionLegend,
 };
