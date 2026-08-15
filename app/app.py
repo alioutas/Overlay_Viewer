@@ -56,33 +56,23 @@ FAVICON_SVG = (
     "%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
 )
 
-# A dark, glassmorphic theme (deep charcoal base, gold->cyan accent gradient,
-# self-hosted Inter) layered on Shiny's modern "shiny" preset rather than
-# plain Bootstrap, since it starts from softer corners/shadows already.
-theme = (
-    ui.Theme("shiny")
-    .add_defaults(
-        body_bg="#05060a",
-        body_color="#eef0f4",
-        primary="#F0C808",
-        secondary="#22d3ee",
-        border_radius="0.85rem",
-        font_family_base="'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif",
-        input_bg="rgba(255,255,255,0.05)",
-        input_color="#eef0f4",
-        input_border_color="rgba(255,255,255,0.14)",
-    )
-)
+# Deliberately an unmodified preset: shiny.ui.Theme only shells out to libsass
+# when the theme carries customizations, and libsass is a C extension that cannot
+# be installed in Pyodide. An untouched preset serves Shiny's precompiled CSS, so
+# the same source runs both on a server and in a Shinylive (WebAssembly) build,
+# with no Sass toolchain and no `shiny[theme]` extra. The variables the old
+# .add_defaults() set are ported to CSS custom properties in the stylesheet below.
+theme = ui.Theme("shiny")
 
 app_ui = ui.page_fluid(
     ui.tags.link(rel="icon", href=FAVICON_SVG),
     ui.tags.style("""
-        @font-face { font-family:'Inter'; font-weight:400; font-style:normal; font-display:swap; src:url('/fonts/inter-400.woff2') format('woff2'); }
-        @font-face { font-family:'Inter'; font-weight:500; font-style:normal; font-display:swap; src:url('/fonts/inter-500.woff2') format('woff2'); }
-        @font-face { font-family:'Inter'; font-weight:600; font-style:normal; font-display:swap; src:url('/fonts/inter-600.woff2') format('woff2'); }
-        @font-face { font-family:'Inter'; font-weight:700; font-style:normal; font-display:swap; src:url('/fonts/inter-700.woff2') format('woff2'); }
-        @font-face { font-family:'JetBrains Mono'; font-weight:400; font-style:normal; font-display:swap; src:url('/fonts/jetbrains-mono-400.woff2') format('woff2'); }
-        @font-face { font-family:'JetBrains Mono'; font-weight:500; font-style:normal; font-display:swap; src:url('/fonts/jetbrains-mono-500.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:400; font-style:normal; font-display:swap; src:url('fonts/inter-400.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:500; font-style:normal; font-display:swap; src:url('fonts/inter-500.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:600; font-style:normal; font-display:swap; src:url('fonts/inter-600.woff2') format('woff2'); }
+        @font-face { font-family:'Inter'; font-weight:700; font-style:normal; font-display:swap; src:url('fonts/inter-700.woff2') format('woff2'); }
+        @font-face { font-family:'JetBrains Mono'; font-weight:400; font-style:normal; font-display:swap; src:url('fonts/jetbrains-mono-400.woff2') format('woff2'); }
+        @font-face { font-family:'JetBrains Mono'; font-weight:500; font-style:normal; font-display:swap; src:url('fonts/jetbrains-mono-500.woff2') format('woff2'); }
 
         :root {
             --accent-1: #F0C808;
@@ -98,6 +88,17 @@ app_ui = ui.page_fluid(
             --field-bg: rgba(255, 255, 255, 0.04);
             --field-border: rgba(255, 255, 255, 0.10);
             --mono: 'JetBrains Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
+
+            /* Ported from the old .add_defaults(): Bootstrap reads these at
+               runtime, so they need no Sass compile to take effect. */
+            --bs-primary: #F0C808;
+            --bs-primary-rgb: 240, 200, 8;
+            --bs-body-bg: #0b0c0e;
+            --bs-body-color: rgba(255, 255, 255, 0.94);
+            --bs-border-radius: 0.85rem;
+            --bs-body-font-family: 'Inter', system-ui, -apple-system, 'Segoe UI', sans-serif;
+            /* Renders native widgets (select popups, scrollbars) dark. */
+            color-scheme: dark;
         }
 
         html, body {
@@ -282,7 +283,7 @@ app_ui = ui.page_fluid(
         .align-grid .action-button { grid-column: 1 / -1; }
     """),
     ui.tags.script(
-        ui.HTML('{"imports": {"three": "/vendor/three.module.js"}}'),
+        ui.HTML('{"imports": {"three": "./vendor/three.module.min.js"}}'),
         type="importmap",
     ),
     ui.tags.button(ui.tags.span(), id="panel-expand", class_="rail-btn",

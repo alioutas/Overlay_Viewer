@@ -1,6 +1,18 @@
-shiny[theme]
+# Local development / running the app with a real Python server.
+# For the Shinylive (in-browser) build, see app/requirements.txt instead - that
+# one lists only what Pyodide lacks.
+#
+# Note: plain `shiny`, not `shiny[theme]`. The theme is an unmodified preset, so
+# Shiny serves precompiled CSS and libsass (a C extension, unavailable in
+# Pyodide) is never needed.
+shiny
 numpy
 pandas
 pillow
 tifffile
+
+# Only needed to re-run the dev scripts, never imported by the app:
+#   gen_colormaps.py       -> matplotlib
+#   make_synthetic_data.py -> matplotlib, scipy
 matplotlib
+scipy

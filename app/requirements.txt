@@ -1,0 +1,14 @@
+# Extra packages Shinylive must fetch from PyPI at load time.
+#
+# Only list what Pyodide does NOT already ship. numpy, pandas and pillow are
+# built into Pyodide, so naming them here would just add redundant work.
+#
+# tifffile is pure Python (py3-none-any) and needs only numpy, so micropip can
+# install it. The version is pinned deliberately: tifffile >= 2026.5 requires
+# numpy>=2.1, but the Shinylive runtime ships numpy 2.0.2, so an unpinned
+# install resolves to a release micropip cannot satisfy. Raise this pin only
+# after confirming the bundled numpy is new enough.
+#
+# Note: tifffile's optional `imagecodecs` extra is a C extension and is NOT
+# installable here, which limits reading to uncompressed / zlib-style TIFFs.
+tifffile==2026.4.11
