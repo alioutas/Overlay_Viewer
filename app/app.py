@@ -49,10 +49,15 @@ MAX_POINT_SIZE = 20.0
 # exists to avoid.
 IMAGE_CLEARANCE_PX = 5.0
 
+# Kept in Python as well as CSS because the busy-indicator options below are
+# configured from Python and must match the panel's palette.
+ACCENT = "#F0C808"
+ACCENT_2 = "#7bd1a8"
+
 FAVICON_SVG = (
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
     "%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E"
-    "%3Cstop offset='0' stop-color='%23F0C808'/%3E%3Cstop offset='1' stop-color='%2322d3ee'/%3E"
+    "%3Cstop offset='0' stop-color='%23F0C808'/%3E%3Cstop offset='1' stop-color='%237bd1a8'/%3E"
     "%3C/linearGradient%3E%3C/defs%3E%3Crect width='32' height='32' rx='8' fill='url(%23g)'/%3E%3C/svg%3E"
 )
 
@@ -66,6 +71,26 @@ theme = ui.Theme("shiny")
 
 app_ui = ui.page_fluid(
     ui.tags.link(rel="icon", href=FAVICON_SVG),
+    # Loading a TIFF and parsing a large localization table take a few seconds,
+    # and that work happens in reactive calcs rather than in a visible output -
+    # so the page-level pulse is what actually signals "working" here, with the
+    # spinner covering the status readout while it recomputes.
+    ui.busy_indicators.use(spinners=True, pulse=True),
+    ui.busy_indicators.options(
+        # A Path, not the "ring2" name: passing the name makes Shiny emit
+        # url('spinners/ring2.svg') into an inline <style>, which resolves
+        # against the document rather than Shiny's asset folder and 404s. Given
+        # a Path it base64-inlines the SVG instead, so there is no URL to
+        # resolve - which also keeps it working in a Shinylive build.
+        spinner_type=_WWW_DIR / "spinners" / "ring2.svg",
+        spinner_color=ACCENT,
+        spinner_size="28px",
+        # Short delay so quick updates (a slider nudge) don't flash a spinner.
+        spinner_delay="0.25s",
+        pulse_background=f"linear-gradient(90deg, {ACCENT}, {ACCENT_2})",
+        pulse_height="3px",
+        pulse_speed="1.6s",
+    ),
     ui.tags.style("""
         @font-face { font-family:'Inter'; font-weight:400; font-style:normal; font-display:swap; src:url('fonts/inter-400.woff2') format('woff2'); }
         @font-face { font-family:'Inter'; font-weight:500; font-style:normal; font-display:swap; src:url('fonts/inter-500.woff2') format('woff2'); }
