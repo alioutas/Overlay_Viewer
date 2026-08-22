@@ -67,21 +67,43 @@ let currentPointOpacity = 0.9;
 // Untransformed image dimensions, kept so the alignment controls can be
 // re-applied from scratch rather than accumulating rounding on each nudge.
 let imageBase = null;
-let imageTransform = { scale: 1, dx_px: 0, dy_px: 0 };
+let imageTransform = { scale: 1, dx_px: 0, dy_px: 0, rotation_deg: 0, flip_x: false, flip_y: false };
 
 function applyImageTransform() {
     if (!imagePlane || !imageBase) return;
     const { width, height, z } = imageBase;
     const s = imageTransform.scale || 1;
-    imagePlane.scale.set(s, s, 1);
+
+    // Mirroring is a negative scale on the axis being flipped. Three.js composes
+    // the local matrix as T * R * S, so the rotation is applied *after* the
+    // mirror and therefore turns the already-flipped image - which is what makes
+    // "clockwise" stay clockwise on screen regardless of the flip state.
+    imagePlane.scale.set(
+        s * (imageTransform.flip_x ? -1 : 1),
+        s * (imageTransform.flip_y ? -1 : 1),
+        1,
+    );
+    // Negated because the camera looks down -Z, where a positive Z rotation
+    // reads as counter-clockwise.
+    imagePlane.rotation.z = -(imageTransform.rotation_deg || 0) * Math.PI / 180;
+
     // PlaneGeometry is centred on its own origin, so half the *scaled* size puts
     // image pixel (0,0) at world (0,0); rows then run downward (-Y) to match the
     // localization convention. The offsets shift from there: +X right, +Y down.
+    // Rotation and mirroring act about that centre, so the image stays put
+    // instead of swinging away from the data.
     imagePlane.position.set(
         (width * s) / 2 + imageTransform.dx_px,
         -(height * s) / 2 - imageTransform.dy_px,
         z,
     );
+}
+
+// Reflect the server-held flip state on the buttons (rotation is momentary, so
+// it has no persistent "on" look).
+function syncOrientationButtons() {
+    document.getElementById("flip_h")?.classList.toggle("is-active", !!imageTransform.flip_x);
+    document.getElementById("flip_v")?.classList.toggle("is-active", !!imageTransform.flip_y);
 }
 
 const scaleBarEl = document.createElement("div");
@@ -343,8 +365,12 @@ function applyImageTransformUpdate(msg) {
         scale: typeof msg.scale === "number" ? msg.scale : 1,
         dx_px: typeof msg.dx_px === "number" ? msg.dx_px : 0,
         dy_px: typeof msg.dy_px === "number" ? msg.dy_px : 0,
+        rotation_deg: typeof msg.rotation_deg === "number" ? msg.rotation_deg : 0,
+        flip_x: !!msg.flip_x,
+        flip_y: !!msg.flip_y,
     };
     applyImageTransform();
+    syncOrientationButtons();
 }
 
 function registerHandlers() {

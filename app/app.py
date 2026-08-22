@@ -54,6 +54,29 @@ IMAGE_CLEARANCE_PX = 5.0
 ACCENT = "#F0C808"
 ACCENT_2 = "#7bd1a8"
 
+# Inline SVG rather than an icon font: no extra request, and it survives the
+# Shinylive build where every asset has to be bundled.
+_SVG_OPEN = (
+    "<svg viewBox='0 0 16 16' width='15' height='15' fill='none' stroke='currentColor' "
+    "stroke-width='1.6' stroke-linecap='round' stroke-linejoin='round' aria-hidden='true'>"
+)
+# Arc that stops short of a full circle, with an arrowhead closing it clockwise.
+ICON_ROTATE_CW = _SVG_OPEN + (
+    "<path d='M13.2 8A5.2 5.2 0 1 1 11.4 4.1'/>"
+    "<polyline points='13.4 1.9 13.4 5 10.3 5'/>"
+) + "</svg>"
+# Mirror axis plus two solid arrowheads pointing away from it.
+ICON_FLIP_H = _SVG_OPEN + (
+    "<path d='M8 1.6v12.8' stroke-dasharray='2 2'/>"
+    "<path d='M6.1 4.2 2.2 8l3.9 3.8z' fill='currentColor' stroke='none'/>"
+    "<path d='M9.9 4.2 13.8 8l-3.9 3.8z' fill='currentColor' stroke='none'/>"
+) + "</svg>"
+ICON_FLIP_V = _SVG_OPEN + (
+    "<path d='M1.6 8h12.8' stroke-dasharray='2 2'/>"
+    "<path d='M4.2 6.1 8 2.2l3.8 3.9z' fill='currentColor' stroke='none'/>"
+    "<path d='M4.2 9.9 8 13.8l3.8-3.9z' fill='currentColor' stroke='none'/>"
+) + "</svg>"
+
 FAVICON_SVG = (
     "data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E"
     "%3Cdefs%3E%3ClinearGradient id='g' x1='0' y1='0' x2='1' y2='1'%3E"
@@ -305,7 +328,22 @@ app_ui = ui.page_fluid(
 
         .align-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 4px; }
         .align-grid .shiny-input-container { width: 100% !important; }
-        .align-grid .action-button { grid-column: 1 / -1; }
+        .align-grid > .action-button { grid-column: 1 / -1; }
+
+        .align-actions { grid-column: 1 / -1; display: flex; gap: 6px; }
+        .sidepanel .icon-action {
+            flex: 1; height: 32px; padding: 0;
+            display: flex; align-items: center; justify-content: center;
+            color: var(--text-label) !important;
+        }
+        .sidepanel .icon-action:hover { background: rgba(255, 255, 255, 0.12) !important; }
+        /* Flip state is driven from the server, so the button reflects the truth
+           rather than a click count that could drift out of sync. */
+        .sidepanel .icon-action.is-active {
+            background: rgba(var(--accent-1-rgb), 0.18) !important;
+            border-color: rgba(var(--accent-1-rgb), 0.55) !important;
+            color: var(--accent-1) !important;
+        }
     """),
     ui.tags.script(
         ui.HTML('{"imports": {"three": "./vendor/three.module.min.js"}}'),
@@ -338,6 +376,23 @@ app_ui = ui.page_fluid(
                         ui.input_numeric("image_scale", "Scale", value=1, min=0.01, step=0.05),
                         ui.input_numeric("image_dx", "X (nm)", value=0, step=100),
                         ui.input_numeric("image_dy", "Y (nm)", value=0, step=100),
+                        # Orientation controls. These move the image only - the
+                        # localizations stay put and act as the reference.
+                        ui.div(
+                            ui.input_action_button(
+                                "rotate_cw", ui.HTML(ICON_ROTATE_CW),
+                                class_="icon-action", title="Rotate image 90° clockwise",
+                            ),
+                            ui.input_action_button(
+                                "flip_h", ui.HTML(ICON_FLIP_H),
+                                class_="icon-action", title="Flip image horizontally",
+                            ),
+                            ui.input_action_button(
+                                "flip_v", ui.HTML(ICON_FLIP_V),
+                                class_="icon-action", title="Flip image vertically",
+                            ),
+                            class_="align-actions",
+                        ),
                         ui.input_action_button("fit_image", "Fit to data"),
                         class_="align-grid",
                     ),
@@ -505,6 +560,25 @@ def server(input, output, session):
 
         await session.send_custom_message("scene_update", msg)
 
+    # Orientation of the image plane only; the localizations are never moved, so
+    # they stay the fixed reference the image is aligned onto.
+    #
+    # Derived straight from each button's click count rather than accumulated in
+    # a reactive.value on every event: two clicks landing in the same reactive
+    # flush coalesce into a single event, which would drop a step. The counter is
+    # authoritative, so N clicks always mean N quarter-turns / N parity flips.
+    @reactive.calc
+    def image_rotation():
+        return ((input.rotate_cw() or 0) * 90) % 360
+
+    @reactive.calc
+    def image_flip_x():
+        return (input.flip_h() or 0) % 2 == 1
+
+    @reactive.calc
+    def image_flip_y():
+        return (input.flip_v() or 0) % 2 == 1
+
     @reactive.effect
     async def _push_image_transform():
         # Independent of _push_scene_update so nudging the image does not rebuild
@@ -514,6 +588,9 @@ def server(input, output, session):
             "scale": input.image_scale() or 1.0,
             "dx_px": (input.image_dx() or 0.0) / pixel_size,
             "dy_px": (input.image_dy() or 0.0) / pixel_size,
+            "rotation_deg": image_rotation(),
+            "flip_x": image_flip_x(),
+            "flip_y": image_flip_y(),
         })
 
     @reactive.effect
