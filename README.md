@@ -1,4 +1,4 @@
-Link to webapp: https://alioutas-overlay-viewer.share.connect.posit.cloud/
+Link to webapp: ov.lioutas.net
 
 # Overlay Viewer
 
